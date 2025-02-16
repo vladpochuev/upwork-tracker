@@ -8,7 +8,7 @@ import telebot
 from dotenv import load_dotenv
 from flask import Flask, request, current_app
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.sql import insert
+from sqlalchemy.sql import insert, delete
 from telebot import types
 
 
@@ -60,9 +60,9 @@ class Topic(db.Model):
     value = db.Column(db.String())
 
 
-user_topics = db.Table("users_topics",
-                       db.Column("user_id", db.Integer, db.ForeignKey("users.id"), primary_key=True),
-                       db.Column("topic_name", db.String(), db.ForeignKey("topics.topic_name"), primary_key=True))
+users_topics = db.Table("users_topics",
+                        db.Column("user_id", db.Integer, db.ForeignKey("users.id"), primary_key=True),
+                        db.Column("topic_name", db.String(), db.ForeignKey("topics.topic_name"), primary_key=True))
 
 
 def context_required(func):
@@ -104,7 +104,6 @@ def add_topic_status_handler(message):
 def clear_status(user_id):
     status = db.session.query(Status).filter_by(id=user_id).first()
     status.name = None
-    db.session.commit()
 
 
 @bot.callback_query_handler(func=lambda callback: callback.data.startswith("ADD_TOPIC_YES"))
@@ -113,23 +112,24 @@ def add_topic_yes_callback(callback):
     user_id = callback.from_user.id
     topic_name = callback.data[len("ADD_TOPIC_YES_"):]
 
-    if not db.session.query(Topic).filter_by(topic_name=topic_name).first():
-        topic = Topic(topic_name=topic_name)
-        db.session.add(topic)
-        db.session.commit()
-
-    if db.session.query(user_topics).filter_by(user_id=user_id, topic_name=topic_name).first():
+    if db.session.query(users_topics).filter_by(user_id=user_id, topic_name=topic_name).first():
         bot.edit_message_text(text=f"Topic \"{topic_name}\" is already tracked.",
                               chat_id=callback.message.chat.id,
                               message_id=callback.message.message_id)
         clear_status(user_id)
-        return
+        db.session.commit()
+        return {"ok": True}
 
-    users_topic = insert(user_topics).values(user_id=user_id, topic_name=topic_name)
+    if not db.session.query(Topic).filter_by(topic_name=topic_name).first():
+        topic = Topic(topic_name=topic_name)
+        db.session.add(topic)
+        db.session.flush()
+
+    users_topic = insert(users_topics).values(user_id=user_id, topic_name=topic_name)
     db.session.execute(users_topic)
-    db.session.commit()
 
     clear_status(user_id)
+    db.session.commit()
 
     bot.edit_message_text(text=f"Topic \"{topic_name}\" was successfully added to the tracked ones.",
                           chat_id=callback.message.chat.id,
@@ -146,6 +146,51 @@ def add_topic_no_callback(callback):
     db.session.commit()
 
     bot.edit_message_text(text="Topic addition has been canceled",
+                          chat_id=callback.message.chat.id,
+                          message_id=callback.message.message_id)
+
+
+@bot.message_handler(commands=["removetopic"])
+@context_required
+def remove_topic_command(message):
+    user_id = message.from_user.id
+    topics = db.session.query(users_topics).filter_by(user_id=user_id).all()
+
+    if len(topics) == 0:
+        bot.send_message(user_id, "You have no topics to remove")
+        return {"ok": True}
+
+    markup = types.InlineKeyboardMarkup()
+    for topic in topics:
+        markup.add(types.InlineKeyboardButton(topic.topic_name, callback_data="REMOVE_TOPIC_" + topic.topic_name))
+
+    bot.send_message(user_id, "Chose the topic you want to remove.", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda callback: callback.data.startswith("REMOVE_TOPIC"))
+@context_required
+def remove_topic_callback(callback):
+    user_id = callback.from_user.id
+    topic_name = callback.data[len("REMOVE_TOPIC_"):]
+
+    if not db.session.query(users_topics).filter_by(user_id=user_id, topic_name=topic_name).first():
+        bot.edit_message_text(text=f"Topic \"{topic_name}\" was already removed",
+                              chat_id=callback.message.chat.id,
+                              message_id=callback.message.message_id)
+        return {"ok": True}
+
+    rm_user_topic = (delete(users_topics)
+                     .where(users_topics.c.user_id == user_id)
+                     .where(users_topics.c.topic_name == topic_name))
+    db.session.execute(rm_user_topic)
+
+    if db.session.query(users_topics).filter_by(topic_name=topic_name).count() == 0:
+        topic = db.session.query(Topic).filter_by(topic_name=topic_name).first()
+        db.session.delete(topic)
+
+    db.session.commit()
+
+    bot.edit_message_text(text=f"Topic \"{topic_name}\" was successfully removed",
                           chat_id=callback.message.chat.id,
                           message_id=callback.message.message_id)
 
