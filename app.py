@@ -5,11 +5,15 @@ from functools import wraps
 from os.path import join, dirname
 
 import telebot
+from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 from flask import Flask, request, current_app
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import insert, delete
 from telebot import types
+
+from job_formatter import create_job_message
+from topic_paser import get_job_url, get_first_topic_job
 
 
 def get_from_env(key):
@@ -22,6 +26,8 @@ app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = get_from_env("DB_URI")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 # app.config['SQLALCHEMY_ECHO'] = True
+
+scheduler = BackgroundScheduler()
 
 db = SQLAlchemy(app)
 
@@ -243,6 +249,31 @@ def add_topic_command(message):
 
     bot.send_message(message.chat.id, "Please enter the topic you would like to track")
 
+
+@scheduler.scheduled_job('interval', seconds=10)
+def check_topics():
+    with app.app_context():
+        try:
+            topics = db.session.query(Topic).all()
+            for topic in topics:
+                job_url = get_job_url(topic.topic_name)
+                if not topic.value or job_url != topic.value:
+                    topic.value = job_url
+                    db.session.commit()
+
+                    job = get_first_topic_job(topic.topic_name)
+                    if not job:
+                        return
+                    job_message = create_job_message(job)
+
+                    users_topic = db.session.query(users_topics).filter_by(topic_name=topic.topic_name).all()
+                    for user in users_topic:
+                        bot.send_message(user.user_id, job_message)
+        except Exception as e:
+            print(e)
+
+
+scheduler.start()
 
 with app.app_context():
     db.create_all()

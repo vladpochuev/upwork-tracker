@@ -9,8 +9,9 @@ def get_soup(url):
     return BeautifulSoup(html, "html.parser")
 
 
-def get_job_url(url):
-    topic_soup = get_soup(url)
+def get_job_url(topic_name):
+    topic_url = f"https://www.upwork.com/nx/search/jobs/?q={topic_name}"
+    topic_soup = get_soup(topic_url)
     domain = "https://www.upwork.com"
     topic_header = topic_soup.find(class_="job-tile-header d-flex align-items-start")
     relative_url = topic_header.find("a")["href"]
@@ -34,16 +35,34 @@ def collect_features_to_dict(features):
     return dictionary
 
 
+def is_job_private(url):
+    try:
+        job_soup = get_soup(url)
+        job_private_text = job_soup.find("main", id="main").find("div", class_="reason-text").find("h4").text
+        return job_private_text.strip() == "This job is a private listing."
+    except Exception:
+        return False
+
+
 def get_first_topic_job(topic_name):
-    topic_url = f"https://www.upwork.com/nx/search/jobs/?q={topic_name}"
-    job_link = get_job_url(topic_url)
-    job_soup = get_soup(job_link)
+    job_url = get_job_url(topic_name)
+    job_soup = get_soup(job_url)
 
-    job_title = job_soup.find("header", class_="air3-card-section py-4x").find("h4").text
-    job_description = job_soup.find("section", class_="air3-card-section py-4x").find("p", class_="text-body-sm").text
+    try:
+        job_title = job_soup.find("header", class_="air3-card-section py-4x").find("h4").text
+        job_description = (job_soup.find("section", class_="air3-card-section py-4x")
+                           .find("p", class_="text-body-sm")
+                           .text)
 
-    raw_features = job_soup.find("ul", class_="features list-unstyled m-0").find_all("li")
-    features_dict = collect_features_to_dict(raw_features)
+        raw_features = job_soup.find("ul", class_="features list-unstyled m-0").find_all("li")
+        features_dict = collect_features_to_dict(raw_features)
 
-    job_features = JobFeatures(features_dict)
-    return Job(job_link, job_title, job_description, job_features)
+        job_features = JobFeatures(features_dict)
+        return Job(job_url, job_title, job_description, job_features)
+    except Exception as e:
+        if is_job_private(job_url):
+            print("Job is private")
+        else:
+            print(e)
+
+        return None
