@@ -125,7 +125,7 @@ def add_topic_yes_callback(callback):
                               message_id=callback.message.message_id)
         clear_status(user_id)
         db.session.commit()
-        return {"ok": True}
+        return
 
     if not db.session.query(Topic).filter_by(topic_name=topic_name).first():
         topic = Topic(topic_name=topic_name)
@@ -165,7 +165,7 @@ def remove_topic_command(message):
 
     if len(topics) == 0:
         bot.send_message(user_id, "You have no topics to remove")
-        return {"ok": True}
+        return
 
     markup = types.InlineKeyboardMarkup()
     for topic in topics:
@@ -184,7 +184,7 @@ def remove_topic_callback(callback):
         bot.edit_message_text(text=f"Topic \"{topic_name}\" was already removed",
                               chat_id=callback.message.chat.id,
                               message_id=callback.message.message_id)
-        return {"ok": True}
+        return
 
     rm_user_topic = (delete(users_topics)
                      .where(users_topics.c.user_id == user_id)
@@ -219,6 +219,7 @@ def start_command(message):
         db.session.add(status)
         db.session.commit()
 
+    bot.set_my_commands(get_commands())
     bot.send_message(message.chat.id, textwrap.dedent(f"""
         Hello, {message.from_user.first_name}.
 
@@ -226,7 +227,15 @@ def start_command(message):
         To start using the bot, add any topic to your list using the /addtopic command.
         To learn more about bots functionality, use the /help command.
     """), parse_mode="html")
-    return {"ok": True}
+
+
+def get_commands():
+    return [
+        types.BotCommand("start", "Start interacting with the bot"),
+        types.BotCommand("help", "Get information about this bot"),
+        types.BotCommand("addtopic", "Add a new topic"),
+        types.BotCommand("removetopic", "Remove an existing topic")
+    ]
 
 
 @bot.message_handler(commands=["help"])
@@ -249,6 +258,11 @@ def add_topic_command(message):
     db.session.commit()
 
     bot.send_message(message.chat.id, "Please enter the topic you would like to track")
+
+
+@bot.message_handler()
+def default(message):
+    bot.send_message(message.chat.id, "Sorry, command was not recognized.")
 
 
 @scheduler.scheduled_job('interval', minutes=1, max_instances=10)
