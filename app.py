@@ -1,5 +1,6 @@
 import os
 import textwrap
+from concurrent.futures.thread import ThreadPoolExecutor
 from datetime import datetime
 from functools import wraps
 from os.path import join, dirname
@@ -13,7 +14,7 @@ from sqlalchemy.sql import insert, delete
 from telebot import types
 
 from job_formatter import create_job_message
-from topic_paser import get_job_url, get_first_topic_job
+from topic_paser import get_job_url, get_job
 
 
 def get_from_env(key):
@@ -28,8 +29,8 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 # app.config['SQLALCHEMY_ECHO'] = True
 
 scheduler = BackgroundScheduler()
-
 db = SQLAlchemy(app)
+thread_pool = ThreadPoolExecutor(10)
 
 bot_token = get_from_env("TELEGRAM_BOT_TOKEN")
 bot = telebot.TeleBot(bot_token)
@@ -97,7 +98,7 @@ def get_status(user_id):
 
 @bot.message_handler(func=lambda message: get_status(message.from_user.id) == ADD_TOPIC_STATUS)
 def add_topic_status_handler(message):
-    topic = message.text.strip()
+    topic = message.text.strip().lower()
 
     markup = types.InlineKeyboardMarkup()
     btn_yes = types.InlineKeyboardButton("Yes", callback_data="ADD_TOPIC_YES_" + topic)
@@ -250,27 +251,36 @@ def add_topic_command(message):
     bot.send_message(message.chat.id, "Please enter the topic you would like to track")
 
 
-@scheduler.scheduled_job('interval', seconds=10)
-def check_topics():
+@scheduler.scheduled_job('interval', minutes=1, max_instances=10)
+def topic_producer():
     with app.app_context():
         try:
             topics = db.session.query(Topic).all()
             for topic in topics:
                 job_url = get_job_url(topic.topic_name)
                 if not topic.value or job_url != topic.value:
-                    topic.value = job_url
-                    db.session.commit()
-
-                    job = get_first_topic_job(topic.topic_name)
-                    if not job:
-                        return
-                    job_message = create_job_message(job)
-
-                    users_topic = db.session.query(users_topics).filter_by(topic_name=topic.topic_name).all()
-                    for user in users_topic:
-                        bot.send_message(user.user_id, job_message)
+                    thread_pool.submit(update_topic, topic.topic_name, topic.value, job_url)
         except Exception as e:
             print(e)
+
+
+def update_topic(topic_name, old_job_url, new_job_url):
+    with app.app_context():
+        topic = db.session.query(Topic).filter_by(topic_name=topic_name).first()
+        if old_job_url != topic.value:
+            return
+
+        topic.value = new_job_url
+        db.session.commit()
+
+        job = get_job(new_job_url)
+        if not job:
+            return
+        job_message = create_job_message(job)
+
+        users_topic = db.session.query(users_topics).filter_by(topic_name=topic_name).all()
+        for user in users_topic:
+            bot.send_message(user.user_id, job_message)
 
 
 scheduler.start()
