@@ -290,11 +290,11 @@ def update_topic(topic_name, old_job_url, new_job_url):
         job = get_job(new_job_url)
         if not job:
             return
-        job_message = create_job_message(job)
+        job_message = create_job_message(job, topic_name)
 
         users_topic = db.session.query(users_topics).filter_by(topic_name=topic_name).all()
         for user in users_topic:
-            bot.send_message(user.user_id, job_message)
+            bot.send_message(user.user_id, job_message, parse_mode="HTML")
 
 
 scheduler.start()
