@@ -91,9 +91,62 @@ def webhook():
     return {"ok": True}
 
 
-def get_status(user_id):
-    with app.app_context():
-        return db.session.query(Status).filter_by(id=user_id).first().name
+@bot.message_handler(commands=["start"])
+@context_required
+def start_command(message):
+    user_id = message.from_user.id
+    if not db.session.query(User).filter_by(id=user_id).first():
+        user = User(id=user_id,
+                    first_name=message.from_user.first_name,
+                    last_name=message.from_user.last_name,
+                    username=message.from_user.username,
+                    language_code=message.from_user.language_code,
+                    registered_at=datetime.now())
+        status = Status(id=user_id, name=None)
+
+        db.session.add(user)
+        db.session.add(status)
+        db.session.commit()
+
+    bot.set_my_commands(get_commands())
+    bot.send_message(message.chat.id, textwrap.dedent(f"""
+        Hello, {message.from_user.first_name}.
+
+        This bot is designed to help you receive notifications about new UpWork jobs.
+        To start using the bot, add any topic to your list using the /addtopic command.
+        To learn more about bots functionality, use the /help command.
+    """), parse_mode="html")
+
+
+def get_commands():
+    return [
+        types.BotCommand("start", "Start interacting with the bot"),
+        types.BotCommand("help", "Get information about this bot"),
+        types.BotCommand("addtopic", "Add a new topic"),
+        types.BotCommand("removetopic", "Remove an existing topic")
+    ]
+
+
+@bot.message_handler(commands=["help"])
+def help_command(message):
+    bot.send_message(message.chat.id, textwrap.dedent(f"""
+        This bot is designed to help you receive notifications about new UpWork jobs.
+        To start using the bot, add any topic to your list using the /addtopic command.
+
+        <b>List of commands</b>
+        /addtopic - add a new topic
+        /removetopic - remove an existing topic
+    """), parse_mode="html")
+
+
+@bot.message_handler(commands=["addtopic"])
+@context_required
+def add_topic_command(message):
+    status = db.session.query(Status).filter_by(id=message.from_user.id).first()
+    status.name = ADD_TOPIC_STATUS
+    db.session.commit()
+
+    bot.send_message(message.chat.id, "Please enter the topic you would like to track")
 
 
 @bot.message_handler(func=lambda message: get_status(message.from_user.id) == ADD_TOPIC_STATUS)
@@ -108,9 +161,9 @@ def add_topic_status_handler(message):
     bot.send_message(message.from_user.id, f"Do you want to add new topic \"{topic}\"?", reply_markup=markup)
 
 
-def clear_status(user_id):
-    status = db.session.query(Status).filter_by(id=user_id).first()
-    status.name = None
+def get_status(user_id):
+    with app.app_context():
+        return db.session.query(Status).filter_by(id=user_id).first().name
 
 
 @bot.callback_query_handler(func=lambda callback: callback.data.startswith("ADD_TOPIC_YES"))
@@ -141,6 +194,11 @@ def add_topic_yes_callback(callback):
     bot.edit_message_text(text=f"Topic \"{topic_name}\" was successfully added to the tracked ones.",
                           chat_id=callback.message.chat.id,
                           message_id=callback.message.message_id)
+
+
+def clear_status(user_id):
+    status = db.session.query(Status).filter_by(id=user_id).first()
+    status.name = None
 
 
 @bot.callback_query_handler(func=lambda callback: callback.data.startswith("ADD_TOPIC_NO"))
@@ -200,64 +258,6 @@ def remove_topic_callback(callback):
     bot.edit_message_text(text=f"Topic \"{topic_name}\" was successfully removed",
                           chat_id=callback.message.chat.id,
                           message_id=callback.message.message_id)
-
-
-@bot.message_handler(commands=["start"])
-@context_required
-def start_command(message):
-    user_id = message.from_user.id
-    if not db.session.query(User).filter_by(id=user_id).first():
-        user = User(id=user_id,
-                    first_name=message.from_user.first_name,
-                    last_name=message.from_user.last_name,
-                    username=message.from_user.username,
-                    language_code=message.from_user.language_code,
-                    registered_at=datetime.now())
-        status = Status(id=user_id, name=None)
-
-        db.session.add(user)
-        db.session.add(status)
-        db.session.commit()
-
-    bot.set_my_commands(get_commands())
-    bot.send_message(message.chat.id, textwrap.dedent(f"""
-        Hello, {message.from_user.first_name}.
-
-        This bot is designed to help you receive notifications about new UpWork jobs.
-        To start using the bot, add any topic to your list using the /addtopic command.
-        To learn more about bots functionality, use the /help command.
-    """), parse_mode="html")
-
-
-def get_commands():
-    return [
-        types.BotCommand("start", "Start interacting with the bot"),
-        types.BotCommand("help", "Get information about this bot"),
-        types.BotCommand("addtopic", "Add a new topic"),
-        types.BotCommand("removetopic", "Remove an existing topic")
-    ]
-
-
-@bot.message_handler(commands=["help"])
-def help_command(message):
-    bot.send_message(message.chat.id, textwrap.dedent(f"""
-        This bot is designed to help you receive notifications about new UpWork jobs.
-        To start using the bot, add any topic to your list using the /addtopic command.
-    
-        <b>List of commands</b>
-        /addtopic - add a new topic
-        /removetopic - remove an existing topic
-    """), parse_mode="html")
-
-
-@bot.message_handler(commands=["addtopic"])
-@context_required
-def add_topic_command(message):
-    status = db.session.query(Status).filter_by(id=message.from_user.id).first()
-    status.name = ADD_TOPIC_STATUS
-    db.session.commit()
-
-    bot.send_message(message.chat.id, "Please enter the topic you would like to track")
 
 
 @bot.message_handler()
